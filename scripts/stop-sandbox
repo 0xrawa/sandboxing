@@ -1,0 +1,7 @@
+#!/bin/bash
+
+echo "##### Stopping VM #####"
+
+PID=$(pgrep qemu-system)
+
+sudo kill $PID

@@ -1,0 +1,28 @@
+#!/bin/bash
+
+DISK=$1.qcow2
+MEMORY=2048
+CORES=2
+
+echo "##### Creating VM #####"
+
+if [ -f $DISK ];
+then
+echo "File $DISK already exists, rename or move it!"
+
+else
+dd if=/images/ubuntu_server.qcow2 of=$DISK
+
+qemu-system-x86_64 -hda $DISK -smp $CORES -m $MEMORY -net user,hostfwd=tcp::10022-:22 -net nic -display none -daemonize -enable-kvm -cpu host,-svm
+
+sleep 30
+
+scp /images/install.sh sandbox@localhost:~/
+
+ssh -t sandbox@localhost -p 10022 "sudo sh install.sh"
+
+PID=$(pgrep qemu-system)
+
+echo "SSH into the VM with: ssh sandbox@localhost -p 10022"
+echo "PID of VM: $PID"
+fi
