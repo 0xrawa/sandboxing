@@ -69,31 +69,17 @@ sudo modprobe vfio_iommu_type1
 sudo modprobe vfio
 ```
 
-#### Method 1
-
 Now we unbind the GPU and register it as a VFIO device. Replace `<GPU_PCI_ADDRESS>` with the PCI address and `<GPU_ID_1>` `<GPU_ID_2>` with the device ID of your GPU, i.e `"0000:01:00.0"`, `"10de"` and `"22c4"`:
 
-`echo -n <GPU_PCI_ADDRESS> | tee /sys/bus/pci/drivers/nvidia/unbind`
-`echo -n <GPU_ID_1> <GPU_ID_2> > /sys/bus/pci/drivers/vfio-pci/new_id`
+`echo -n <GPU_PCI_ADDRESS> | tee /sys/bus/pci/drivers/nvidia/unbind` (Usually not necessary as `sudo modprobe -r nvidia_uvm` removes the driver from the GPU)
 
+`echo -n <GPU_ID_1> <GPU_ID_2> > /sys/bus/pci/drivers/vfio-pci/new_id` (Creates the IOMMU group file)
 
 Next we do the same with the audio device:.
 
 `echo -n <AUDIO_PCI_ADDRESS> > /sys/bus/pci/devices/<AUDIO_PCI_ADDRESS>/driver/unbind`
+
 `echo -n <AUDIO_PCI_ADDRESS> | tee /sys/bus/pci/drivers/vfio-pci/bind`
-
-#### Method 2
-
-Now we unbind the GPU and the audio device from its current drivers. Replace `<GPU_PCI_ADDRESS>` with the PCI address of your GPU, i.e `"0000:01:00.0"`:
-
-`echo -n <GPU_PCI_ADDRESS> | tee /sys/bus/pci/devices/<GPU_PCI_ADDRESS>/driver/unbind`
-`echo -n <AUDIO_PCI_ADDRESS> > /sys/bus/pci/devices/<AUDIO_PCI_ADDRESS>/driver/unbind`
-
-Next we bind the two devices to the vfio-pci driver, which provides direct device access to userspace. In other words, this will remove a lot of overhead when running our GPU in the VM.
-
-`echo -n <GPU_ID_1> <GPU_ID_2> > /sys/bus/pci/drivers/vfio-pci/new_id`
-`echo -n <AUDIO_PCI_ADDRESS> | tee /sys/bus/pci/drivers/vfio-pci/bind`
-
 
 To verify that everything worked out correctly, you can run `lspci -nnv -s <GPU_PCI_ADDRESS>`. The line should have changed from `Kernel driver in use: nvidia` to `Kernel driver in use: vfio-pci`.
 
@@ -159,3 +145,23 @@ qemu-system-x86_64 \
 -device vfio-pci,host=01:00.0,multifunction=on \
 -device vfio-pci,host=01:00.1
 ```
+
+
+## Errors
+
+### Cannot allocate memory
+
+```bash
+qemu-system-x86_64: -device vfio-pci,host=01:00.0,multifunction=on: VFIO_MAP_DMA: -12
+qemu-system-x86_64: -device vfio-pci,host=01:00.0,multifunction=on: VFIO_MAP_DMA: -12
+qemu-system-x86_64: -device vfio-pci,host=01:00.0,multifunction=on: vfio 0000:01:00.0: failed to setup container for group 14: memory listener initialization failed: Region pc.ram: vfio_dma_map(0x55f3ffb9a3d0, 0x100000, 0xbff00000, 0x7f4aa1b00000) = -12 (Cannot allocate memory)
+```
+The error message vfio_dma_map() = -12 (Cannot allocate memory) means that the system failed to allocate enough contiguous memory to map the region for the device. This is typically due to memory fragmentation within the Linux kernel.
+
+One of the most common solutions to this issue is to increase the amount of hugepages on your system, which reserves large blocks of contiguous memory that can be used for these device mappings. 
+
+Increase the size of the pages: `echo 4096 | sudo tee /proc/sys/vm/nr_hugepages`
+
+Add the following flag when starting `qemu-system`: `-mem-path /dev/hugepages`
+
+
