@@ -1,19 +1,26 @@
 # Nvidia GPU passthrough to QEMU VM
 
 There are three scenarios you can find yourself in. See which one applies to you:
-1. You have Laptop with a GPU next to the integrated graphics. 
-2. You have a headless server that you access over a remote connection.
-3. You have a Desktop environment.
+1. You have Laptop with a GPU next to the integrated graphics. [Go here](#laptop-gpu-passthrough)
+2. You have a headless server that you access over a remote connection. [Go here](#server-gpu-passthrough)
+3. You have a Desktop environment. [Go here](#desktop-gpu-passthrough)
 
-## 1. Enable IOMMU
+First follow the two generic steps and then continue according to the scenario that applies to you.
+
+## Generic Steps
+### 1. Enable IOMMU
+
+First we need to enable the [IOMMU](https://en.wikipedia.org/wiki/Input%E2%80%93output_memory_management_unit). 
 
 Open `/etc/default/grub` and edit the following line:
 - for Intel: `GRUB_CMDLINE_LINUX_DEFAULT="quiet splash intel_iommu=on"`
 - for AMD: `GRUB_CMDLINE_LINUX_DEFAULT="quiet splash amd_iommu=on"`
 
-Reboot: `sudo reboot`
+Reboot: `sudo reboot`.
 
-## 2. Find the IOMMU Group and PCI address of the address
+### 2. IOMMU Group and PCI address of the GPU
+
+Second we need to find the IOMMU Group and the PCI address of the GPU we want to passthrough. 
 
 Create a file iommu.sh and put the following code in it:
 ```bash
@@ -25,35 +32,124 @@ for d in /sys/kernel/iommu_groups/*/devices/*; do
 done
 ```
 
-Run it with `sh iommu.sh | grep NVIDIA`. The script will give you all NVIDIA devices and their corresponding groups. Note the __IOMMU group__ and __PCI address__ of the VGA compatible controller and the associated Audio device. Both devices have to be passed through!
+Run it with `sh iommu.sh | grep NVIDIA`. The script will give you all NVIDIA devices and their corresponding groups. Note the __IOMMU group__ and __PCI address__ of the VGA compatible controller and the associated Audio device. Both devices have to be passed through to the VM!
 
-## 3. Unbind the GPU
+Now that these two generic steps are completed, choose which scenario applies to you and continue the instructions from there:
+- [Laptop](#laptop-gpu-passthrough)
+- [Server](#server-gpu-passthrough)
+- [Desktop](#desktop-gpu-passthrough)
+
+## Laptop GPU passthrough
+
+This is the most difficult situation. But no worries, we will work it out together. The difficulty stems from the complication that in some cases the discrete GPU can not easily be released from the display driver. 
+
+### 3. Switch to Integrated Graphics
+
+First we need to make sure that the display is driven by the integrated graphics. We will use the installed nvidia prime profiles:
+- for Intel: `sudo prime-select intel`
+- for AMD: `sudo prime-select amd`
+
+Reboot: `sudo reboot`.
+
+### 4. Unbind the GPU
+
+Now we can try to unbind the GPU. First run `nvidia-smi` to check that no processes are running anymore on the GPU. If that is the case we can release the NVIDIA drivers:
+
+```bash
+sudo modprobe -r nvidia_uvm
+sudo modprobe -r nvidia_drm
+sudo modprobe -r nvidia_modeset
+sudo modprobe -r nvidia
+```
+
+Load the VFIO modules in the kernel:
+```bash
+sudo modprobe vfio_pci
+sudo modprobe vfio_iommu_type1
+sudo modprobe vfio
+```
+
+#### Method 1
+
+Now we unbind the GPU and register it as a VFIO device. Replace `<GPU_PCI_ADDRESS>` with the PCI address and `<GPU_ID_1>` `<GPU_ID_2>` with the device ID of your GPU, i.e `"0000:01:00.0"`, `"10de"` and `"22c4"`:
+
+`echo -n <GPU_PCI_ADDRESS> | tee /sys/bus/pci/drivers/nvidia/unbind`
+`echo -n <GPU_ID_1> <GPU_ID_2> > /sys/bus/pci/drivers/vfio-pci/new_id`
+
+
+Next we do the same with the audio device:.
+
+`echo -n <AUDIO_PCI_ADDRESS> > /sys/bus/pci/devices/<AUDIO_PCI_ADDRESS>/driver/unbind`
+`echo -n <AUDIO_PCI_ADDRESS> | tee /sys/bus/pci/drivers/vfio-pci/bind`
+
+#### Method 2
+
+Now we unbind the GPU and the audio device from its current drivers. Replace `<GPU_PCI_ADDRESS>` with the PCI address of your GPU, i.e `"0000:01:00.0"`:
+
+`echo -n <GPU_PCI_ADDRESS> | tee /sys/bus/pci/devices/<GPU_PCI_ADDRESS>/driver/unbind`
+`echo -n <AUDIO_PCI_ADDRESS> > /sys/bus/pci/devices/<AUDIO_PCI_ADDRESS>/driver/unbind`
+
+Next we bind the two devices to the vfio-pci driver, which provides direct device access to userspace. In other words, this will remove a lot of overhead when running our GPU in the VM.
+
+`echo -n <GPU_ID_1> <GPU_ID_2> > /sys/bus/pci/drivers/vfio-pci/new_id`
+`echo -n <AUDIO_PCI_ADDRESS> | tee /sys/bus/pci/drivers/vfio-pci/bind`
+
+
+To verify that everything worked out correctly, you can run `lspci -nnv -s <GPU_PCI_ADDRESS>`. The line should have changed from `Kernel driver in use: nvidia` to `Kernel driver in use: vfio-pci`.
+
+
+Change the ownership of the created IOMMU group:
+`sudo chown <user>:<group> /dev/vfio/<IOMMU_GROUP>`
+
+### 5. Start the VM
+
+```bash
+qemu-system-x86_64 \
+-enable-kvm \
+-daemonize \
+-hda gpu.qcow2 \
+-smp 4 \
+-m 8164 \
+-net user,hostfwd=tcp::10022-:22 \
+-net nic \
+-display none \
+-cpu host,-svm \
+-device vfio-pci,host=01:00.0,multifunction=on \
+-device vfio-pci,host=01:00.1
+```
+
+
+### 3. Unbind the GPU
 
 If you are running in a Desktop environment, you have to stop the display manager otherwise the GPU will not be freed up. __Attention__: if you stop the display manager, the display will go blank. Make sure you are sshed into the system:
 `sudo systemctl stop display-manager.service`
 
 Unload the NVIDIA drivers:
-`sudo modprobe -r nvidia_uvm`
-`sudo modprobe -r nvidia_drm`
-`sudo modprobe -r nvidia_modeset`
-`sudo modprobe -r nvidia`
+```bash
+sudo modprobe -r nvidia_uvm
+sudo modprobe -r nvidia_drm
+sudo modprobe -r nvidia_modeset
+sudo modprobe -r nvidia
+```
 
 Detatch the GPU:
 `sudo virsh nodedev-detach <gpu_pci_address>`
 `sudo virsh nodedev-detach <audio_pci_address>`
 
 Load VFIO:
-`sudo modprobe vfio_pci`
-`sudo modprobe vfio_iommu_type1`
-`sudo modprobe vfio`
+```bash
+sudo modprobe vfio_pci
+sudo modprobe vfio_iommu_type1
+sudo modprobe vfio
+```
 
-## 4. Start the VM
+### 4. Start the VM
 
 ```bash
-sudo qemu-system-x86_64 \
+qemu-system-x86_64 \
 -enable-kvm \
 -daemonize \
--hda auto_gpt.qcow2 \
+-hda gpu.qcow2 \
 -smp 4 \
 -m 8164 \
 -net user,hostfwd=tcp::10022-:22 \
