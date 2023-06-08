@@ -114,6 +114,11 @@ qemu-system-x86_64 \
 -device vfio-pci,host=01:00.1
 ```
 
+## Server GPU Passthrough
+
+TODO
+
+## Desktop GPU Passthrough
 
 ### 3. Unbind the GPU
 
