@@ -71,15 +71,25 @@ sudo modprobe vfio
 
 Now we unbind the GPU and register it as a VFIO device. Replace `<GPU_PCI_ADDRESS>` with the PCI address and `<GPU_ID_1>` `<GPU_ID_2>` with the device ID of your GPU, i.e `"0000:01:00.0"`, `"10de"` and `"22c4"`:
 
-`echo -n <GPU_PCI_ADDRESS> | tee /sys/bus/pci/drivers/nvidia/unbind` (Usually not necessary as `sudo modprobe -r nvidia_uvm` removes the driver from the GPU)
+```bash
+# Usually not necessary as `sudo modprobe -r nvidia_uvm` removes the driver from the GPU
+echo -n <GPU_PCI_ADDRESS> | tee /sys/bus/pci/drivers/nvidia/unbind
+```
 
-`echo -n <GPU_ID_1> <GPU_ID_2> > /sys/bus/pci/drivers/vfio-pci/new_id` (Creates the IOMMU group file)
+```bash
+# Creates the IOMMU group file
+echo -n <GPU_ID_1> <GPU_ID_2> > /sys/bus/pci/drivers/vfio-pci/new_id
+```
 
 Next we do the same with the audio device:.
 
-`echo -n <AUDIO_PCI_ADDRESS> > /sys/bus/pci/devices/<AUDIO_PCI_ADDRESS>/driver/unbind`
+```bash
+echo -n <AUDIO_PCI_ADDRESS> > /sys/bus/pci/devices/<AUDIO_PCI_ADDRESS>/driver/unbind
+```
 
-`echo -n <AUDIO_PCI_ADDRESS> | tee /sys/bus/pci/drivers/vfio-pci/bind`
+```bash
+echo -n <AUDIO_PCI_ADDRESS> | tee /sys/bus/pci/drivers/vfio-pci/bind
+```
 
 To verify that everything worked out correctly, you can run `lspci -nnv -s <GPU_PCI_ADDRESS>`. The line should have changed from `Kernel driver in use: nvidia` to `Kernel driver in use: vfio-pci`.
 
